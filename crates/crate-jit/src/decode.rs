@@ -246,6 +246,10 @@ pub fn decode(word: u32, pc: u64) -> Op {
         0b0100 | 0b0110 | 0b1100 | 0b1110 => decode_load_store(word, pc),
         // Data processing -- register.
         0b0101 | 0b1101 => decode_data_reg(word),
+        // The 0xce crypto encoding space contains SHA-512, SHA-3, SM3 and
+        // SM4. ID_AA64ISAR0 exposes none of these features. A guest probing
+        // them must take an undefined-instruction exception at its own PC.
+        0b0111 if word >> 24 == 0xce => Op::Undefined,
         // Data processing -- SIMD and floating point.
         0b0111 | 0b1111 => Op::Copy,
         // Reserved / unallocated (op0 0b0000 is reserved; SVE is 0b0010).
@@ -877,6 +881,26 @@ fn decode_ordered(word: u32) -> Op {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn crypto_encodings_match_the_virtual_cpu() {
+        // Decode data only: never execute optional instructions on the host.
+        for word in [
+            0xce63c004, // SM3PARTW1 from the iPad crash report
+            0xcec08420, // SM4E
+            0xce628020, // SHA512H
+            0xce020c20, // EOR3 (SHA-3)
+        ] {
+            assert_eq!(decode(word, 0x1000), Op::Undefined, "{word:#010x}");
+        }
+        for word in [
+            0x4e284820, // AESE
+            0x5e024020, // SHA256H
+            0x1e604020, // FMOV
+        ] {
+            assert_eq!(decode(word, 0x1000), Op::Copy, "{word:#010x}");
+        }
+    }
 
     #[test]
     fn copies_ordinary_data_processing() {
